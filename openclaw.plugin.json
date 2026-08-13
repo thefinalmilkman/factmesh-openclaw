@@ -1,0 +1,31 @@
+{
+  "id": "factmesh",
+  "name": "factmesh (Lichen memory)",
+  "description": "Memory backend backed by a local Lichen fact-mesh: honest recall with confidence tiers and coverage, write-through capture, zero API cost, fully offline.",
+  "version": "0.1.0",
+  "kind": "memory",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "lichenUrl": { "type": "string", "description": "Where the Lichen brain listens." },
+      "tokenBudget": { "type": "number", "minimum": 0, "description": "Max tokens of recalled facts injected per prompt." },
+      "capture": { "type": "boolean", "description": "Write-through capture on agent_end / before_compaction." },
+      "recallK": { "type": "number", "minimum": 1, "description": "Facts recalled per turn." },
+      "timeoutMs": { "type": "number", "minimum": 100, "description": "Hard HTTP timeout." }
+    }
+  },
+  "contracts": {
+    "tools": ["memory_search", "memory_add", "memory_forget"]
+  },
+  "toolMetadata": {
+    "memory_forget": { "optional": true }
+  },
+  "uiHints": {
+    "lichenUrl": { "label": "Lichen URL", "placeholder": "http://127.0.0.1:4174" },
+    "tokenBudget": { "label": "Recall token budget", "advanced": true },
+    "capture": { "label": "Write-through capture" },
+    "recallK": { "label": "Facts per turn (k)", "advanced": true },
+    "timeoutMs": { "label": "HTTP timeout (ms)", "advanced": true }
+  }
+}
