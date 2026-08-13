@@ -1,6 +1,6 @@
 {
   "name": "openclaw-factmesh",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "OpenClaw memory plugin backed by a local Lichen fact-mesh — honest recall with confidence tiers and coverage, write-through capture, fully offline, zero API cost.",
   "main": "index.js",
   "openclaw": {

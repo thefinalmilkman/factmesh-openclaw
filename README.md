@@ -136,5 +136,12 @@ phi4-mini, no channels):
 - Requires Lichen ≥ the 2026-08-13 `/recall` route (restart Lichen after pulling it). On older Lichen the
   recall hook and `memory_search` fail silent / return a structured error; capture and `memory_forget` still work.
 - Package name is unscoped `openclaw-factmesh` (scoped `@factmesh/…` would require owning the npm org;
-  OpenClaw's own docs use the unscoped `openclaw-plugin-*` convention). `private: true` until publish.
+  OpenClaw's own docs use the unscoped `openclaw-plugin-*` convention). Published as 0.1.x on npm.
 - Plain CommonJS JavaScript, **zero runtime dependencies**. Node ≥ 18 (OpenClaw itself requires 22).
+
+## Ecosystem
+
+- **[lichen-core](https://github.com/thefinalmilkman/lichen-core)** — the brain this plugin remembers through (free, MIT).
+- **[The Local AI Field Manual](https://zero-tools.netlify.app)** — the field guide to running this whole stack on ordinary hardware. Pay-what-you-want; the software stays free.
+
+If factmesh earns it, the storefront above is where a tip lives — USDT or ETH on Base, no accounts.
