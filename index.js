@@ -12,9 +12,9 @@
 //                           description: Lichen v1 has NO delete — it downweights via /outcome and supersedes
 //                           via /learn corrections)
 //   CLI                  -> `openclaw factmesh status` (/health), `openclaw factmesh search <query>` (/recall)
-// Plain CommonJS, zero runtime dependencies. Tool input schemas are hand-written JSON Schema — the exact
-// shape TypeBox compiles to — so @sinclair/typebox is NOT required (if a future OpenClaw validates via
-// TypeBox internals rather than JSON Schema, add it and swap the schemas; noted in README).
+// Plain CommonJS, zero runtime dependencies. Tool schemas are hand-written JSON Schema under the
+// `parameters` field (verified against OpenClaw 2026.7.1-2: TypeBox is NOT required, but the field must be
+// `parameters`, execute is (toolCallId, params), results are { content: [{ type: 'text', text }], details? }).
 
 const { makeClient } = require('./lib/client');
 const { extractFacts } = require('./lib/extract');
@@ -80,8 +80,17 @@ const plugin = {
     const log = api.logger || console;
     const debug = (msg) => { try { (log.debug || log.info).call(log, msg); } catch (_) {} };
 
+    // OpenClaw 2026.7+ runs agent turns against the TYPED hook registry (api.on). The legacy
+    // api.registerHook feeds the internal-hook system, which the agent harness never consults —
+    // hooks registered only there look registered ("3 registered hooks") but never fire in a turn.
+    // Prefer api.on; keep registerHook as a fallback for older hosts.
+    const onHook = (event, handler, name, description) => {
+      if (typeof api.on === 'function') return api.on(event, handler);
+      return api.registerHook(event, handler, { name, description });
+    };
+
     // ---- RECALL: inject mesh facts into every prompt, budget-bounded, failure-silent ----
-    api.registerHook('before_prompt_build', async (event) => {
+    onHook('before_prompt_build', async (event) => {
       try {
         const query = String((event && event.prompt) || '').trim();
         if (!query) return;
@@ -92,7 +101,7 @@ const plugin = {
       } catch (e) {
         debug('factmesh: recall skipped (' + ((e && e.message) || e) + ')'); // memory down must never break a prompt
       }
-    }, { name: 'factmesh-recall', description: 'Inject Lichen fact-mesh recall into the prompt' });
+    }, 'factmesh-recall', 'Inject Lichen fact-mesh recall into the prompt');
 
     // ---- CAPTURE: deterministic write-through of user-stated durable facts ----
     const capture = async (messages, why) => {
@@ -106,14 +115,14 @@ const plugin = {
         debug('factmesh: capture skipped (' + ((e && e.message) || e) + ')');
       }
     };
-    api.registerHook('agent_end', (event) => capture(event && event.messages, 'agent_end'), { name: 'factmesh-capture-agent-end', description: 'Write-through capture of user-stated facts at turn end' });
-    api.registerHook('before_compaction', (event) => capture(event && event.messages, 'before_compaction'), { name: 'factmesh-capture-compaction', description: 'Write-through capture of user-stated facts before compaction' });
+    onHook('agent_end', (event) => capture(event && event.messages, 'agent_end'), 'factmesh-capture-agent-end', 'Write-through capture of user-stated facts at turn end');
+    onHook('before_compaction', (event) => capture(event && event.messages, 'before_compaction'), 'factmesh-capture-compaction', 'Write-through capture of user-stated facts before compaction');
 
     // ---- TOOLS ----
     api.registerTool({
       name: 'memory_search',
       description: 'Search the user\'s Lichen fact-mesh memory for facts relevant to a query. Returns facts with confidence tiers (verified/observed/inferred/stale) and a coverage level; low coverage means the memory honestly has little — say so rather than guessing.',
-      input: {
+      parameters: {
         type: 'object',
         properties: {
           query: { type: 'string', description: 'What to look for in memory', minLength: 1 },
@@ -122,19 +131,21 @@ const plugin = {
         required: ['query'],
         additionalProperties: false,
       },
-      execute: async (args) => {
+      execute: async (_id, args) => {
         try {
           const r = await client.recall(String(args.query), args.k);
-          return {
-            result: 'success',
-            details: {
-              facts: (r.facts || []).map((f) => ({ text: f.text, confidence: f.confidence, stability: f.stability, availability: f.availability, src: f.src })),
-              coverage: r.coverage || null,
-              count: (r.facts || []).length,
-            },
+          const details = {
+            facts: (r.facts || []).map((f) => ({ text: f.text, confidence: f.confidence, stability: f.stability, availability: f.availability, src: f.src })),
+            coverage: r.coverage || null,
+            count: (r.facts || []).length,
           };
+          const lines = details.facts.map((f) => '- [' + f.confidence + '] ' + f.text);
+          const text = lines.length
+            ? lines.join('\n') + (details.coverage ? '\ncoverage: ' + details.coverage.level : '')
+            : '(no facts — coverage: ' + (details.coverage ? details.coverage.level : 'unknown') + ')';
+          return { content: [{ type: 'text', text }], details };
         } catch (e) {
-          return { result: 'error', error: 'Lichen unreachable: ' + ((e && e.message) || e) };
+          return { content: [{ type: 'text', text: 'Lichen unreachable: ' + ((e && e.message) || e) }], details: { error: String((e && e.message) || e) } };
         }
       },
     });
@@ -142,7 +153,7 @@ const plugin = {
     api.registerTool({
       name: 'memory_add',
       description: 'Teach the user\'s Lichen fact-mesh a durable fact (preference, project state, decision, person detail). Exact duplicates just reinforce the existing fact; a correction ("Correction: ...") can supersede the old one. Do NOT use for speculation or one-off chatter.',
-      input: {
+      parameters: {
         type: 'object',
         properties: {
           text: { type: 'string', description: 'The fact to remember, as a plain statement', minLength: 4, maxLength: 400 },
@@ -151,12 +162,12 @@ const plugin = {
         required: ['text'],
         additionalProperties: false,
       },
-      execute: async (args) => {
+      execute: async (_id, args) => {
         try {
           const r = await client.learnText(String(args.text), { src: 'openclaw:tool', confidence: args.confidence || 'observed' });
-          return { result: 'success', details: { added: r.added, total: r.total } };
+          return { content: [{ type: 'text', text: 'Remembered (' + (r.added != null ? r.added : '?') + ' new, ' + (r.total != null ? r.total : '?') + ' total).' }], details: { added: r.added, total: r.total } };
         } catch (e) {
-          return { result: 'error', error: 'Lichen unreachable: ' + ((e && e.message) || e) };
+          return { content: [{ type: 'text', text: 'Lichen unreachable: ' + ((e && e.message) || e) }], details: { error: String((e && e.message) || e) } };
         }
       },
     });
@@ -166,7 +177,7 @@ const plugin = {
     api.registerTool({
       name: 'memory_forget',
       description: 'Downweight a wrong or unwanted memory so it fades faster (Lichen has no hard delete: this records a bad outcome, up to ~2x faster decay). To correct a fact instead, use memory_add with "Correction: ..." to supersede it.',
-      input: {
+      parameters: {
         type: 'object',
         properties: {
           text: { type: 'string', description: 'Exact text (or distinctive substring) of the fact to downweight', minLength: 2 },
@@ -174,16 +185,16 @@ const plugin = {
         required: ['text'],
         additionalProperties: false,
       },
-      execute: async (args) => {
+      execute: async (_id, args) => {
         try {
           const r = await client.outcome({ text: String(args.text), good: false });
           return {
-            result: 'success',
+            content: [{ type: 'text', text: 'Downweighted, not deleted — Lichen has no hard delete; the fact now decays faster.' }],
             details: { factId: r.factId, rewardFactor: r.rewardFactor, note: 'Downweighted, not deleted — Lichen has no hard delete; the fact now decays faster.' },
           };
         } catch (e) {
-          if (e && e.status === 404) return { result: 'error', error: 'No matching fact in the mesh.' };
-          return { result: 'error', error: 'Lichen unreachable: ' + ((e && e.message) || e) };
+          if (e && e.status === 404) return { content: [{ type: 'text', text: 'No matching fact in the mesh.' }], details: { error: 'not-found' } };
+          return { content: [{ type: 'text', text: 'Lichen unreachable: ' + ((e && e.message) || e) }], details: { error: String((e && e.message) || e) } };
         }
       },
     }, { optional: true }); // optional: downweighting memory is sensitive — requires explicit allowlisting
@@ -214,7 +225,7 @@ const plugin = {
             ctx.logger.error('Lichen unreachable at ' + cfg.lichenUrl + ': ' + ((e && e.message) || e));
           }
         });
-    });
+    }, { descriptors: [{ name: 'factmesh', description: 'Lichen fact-mesh memory backend', hasSubcommands: true }] });
 
     log.info('factmesh registered (Lichen at ' + cfg.lichenUrl + ', capture ' + (cfg.capture ? 'on' : 'off') + ', budget ' + cfg.tokenBudget + ' tokens)');
   },

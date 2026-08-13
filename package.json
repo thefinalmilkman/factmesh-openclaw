@@ -9,13 +9,13 @@
     ]
   },
   "license": "MIT",
-  "private": true,
   "author": "Zero",
   "files": [
     "index.js",
     "lib/",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "openclaw.plugin.json"
   ],
   "engines": {
     "node": ">=18"
